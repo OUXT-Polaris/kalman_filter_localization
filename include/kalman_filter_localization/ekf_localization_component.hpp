@@ -120,6 +120,7 @@ private:
   Eigen::Vector3d var_odom_;
   bool use_gnss_;
   bool use_odom_;
+  bool use_gnss_as_initial_pose_;
 
   bool initial_pose_recieved_{false};
 

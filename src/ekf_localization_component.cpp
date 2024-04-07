@@ -73,6 +73,8 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
   get_parameter("use_gnss", use_gnss_);
   declare_parameter("use_odom", false);
   get_parameter("use_odom", use_odom_);
+  declare_parameter("use_gnss_as_initial_pose", false);
+  get_parameter("use_gnss_as_initial_pose", use_gnss_as_initial_pose_);
 
   ekf_.setVarImuGyro(var_imu_w_);
   ekf_.setVarImuAcc(var_imu_acc_);
@@ -177,6 +179,9 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
   auto gnss_pose_callback =
     [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
     {
+      if(use_gnss_as_initial_pose_ && !initial_pose_recieved_) {
+        initial_pose_callback(msg);
+      }
       if (initial_pose_recieved_ && use_gnss_) {
         measurementUpdate(*msg, var_gnss_);
       }
