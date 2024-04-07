@@ -177,7 +177,7 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
     };
 
   auto gnss_pose_callback =
-    [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
+    [&](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
     {
       if(use_gnss_as_initial_pose_ && !initial_pose_recieved_) {
         initial_pose_callback(msg);
