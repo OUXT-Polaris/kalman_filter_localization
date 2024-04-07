@@ -183,8 +183,8 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
     };
 
   sub_initial_pose_ =
-    create_subscription<geometry_msgs::msg::PoseStamped>(initial_pose_topic_, 1,
-      initial_pose_callback);
+    create_subscription<geometry_msgs::msg::PoseStamped>(initial_pose_topic_, 
+      rclcpp::QoS(1).transient_local(), initial_pose_callback);
   sub_imu_ =
     create_subscription<sensor_msgs::msg::Imu>(imu_topic_, 1,
       imu_callback);
