@@ -42,7 +42,8 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
 : Node("ekf_localization", options),
   clock_(RCL_ROS_TIME),
   tfbuffer_(std::make_shared<rclcpp::Clock>(clock_)),
-  listener_(tfbuffer_)
+  listener_(tfbuffer_),
+  broadcaster_(this)
 {
   declare_parameter("reference_frame_id", "map");
   get_parameter("reference_frame_id", reference_frame_id_);
@@ -75,6 +76,8 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
   get_parameter("use_odom", use_odom_);
   declare_parameter("use_gnss_as_initial_pose", false);
   get_parameter("use_gnss_as_initial_pose", use_gnss_as_initial_pose_);
+  declare_parameter("broadcast_tf_topic", true);
+  get_parameter("broadcast_tf_topic", broadcast_tf_topic_);
 
   ekf_.setVarImuGyro(var_imu_w_);
   ekf_.setVarImuAcc(var_imu_acc_);
@@ -88,25 +91,13 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
 
   // Setup Subscriber
   auto initial_pose_callback =
-    [this](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
+    [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
     {
-      std::cout << "initial pose callback" << std::endl;
-      initial_pose_recieved_ = true;
-      current_pose_ = *msg;
 
-      Eigen::VectorXd x = Eigen::VectorXd::Zero(ekf_.getNumState());
-      x(STATE::X) = current_pose_.pose.position.x;
-      x(STATE::Y) = current_pose_.pose.position.y;
-      x(STATE::Z) = current_pose_.pose.position.z;
-      x(STATE::QX) = current_pose_.pose.orientation.x;
-      x(STATE::QY) = current_pose_.pose.orientation.y;
-      x(STATE::QZ) = current_pose_.pose.orientation.z;
-      x(STATE::QW) = current_pose_.pose.orientation.w;
-      ekf_.setInitialX(x);
     };
 
   auto imu_callback =
-    [this](const typename sensor_msgs::msg::Imu::SharedPtr msg) -> void
+    [this](const sensor_msgs::msg::Imu::SharedPtr msg) -> void
     {
       if (initial_pose_recieved_) {
         sensor_msgs::msg::Imu transformed_msg;
@@ -147,7 +138,7 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
     };
 
   auto odom_callback =
-    [this](const typename nav_msgs::msg::Odometry::SharedPtr msg) -> void
+    [this](const nav_msgs::msg::Odometry::SharedPtr msg) -> void
     {
       if (initial_pose_recieved_ && use_odom_) {
         Eigen::Affine3d affine;
@@ -177,19 +168,24 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
     };
 
   auto gnss_pose_callback =
-    [&](const typename geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
+    [&](const geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
     {
       if(use_gnss_as_initial_pose_ && !initial_pose_recieved_) {
-        initial_pose_callback(msg);
+        initialPoseCallback(msg);
       }
-      if (initial_pose_recieved_ && use_gnss_) {
-        measurementUpdate(*msg, var_gnss_);
+      else {
+        if (initial_pose_recieved_ && use_gnss_) {
+          RCLCPP_INFO_STREAM(get_logger(), "update measurement");
+          measurementUpdate(*msg, var_gnss_);
+        }
       }
     };
 
-  sub_initial_pose_ =
-    create_subscription<geometry_msgs::msg::PoseStamped>(initial_pose_topic_, 1,
-      initial_pose_callback);
+  if(!use_gnss_as_initial_pose_) {
+    sub_initial_pose_ =
+      create_subscription<geometry_msgs::msg::PoseStamped>(initial_pose_topic_, 1,
+        std::bind(&EkfLocalizationComponent::initialPoseCallback, this, std::placeholders::_1));
+  }
   sub_imu_ =
     create_subscription<sensor_msgs::msg::Imu>(imu_topic_, 1,
       imu_callback);
@@ -203,6 +199,23 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
   timer_ = create_wall_timer(
     std::chrono::duration_cast<std::chrono::nanoseconds>(period),
     std::bind(&EkfLocalizationComponent::broadcastPose, this));
+}
+
+void EkfLocalizationComponent::initialPoseCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+{
+  RCLCPP_INFO_STREAM(get_logger(), "initial pose callback");
+  initial_pose_recieved_ = true;
+  current_pose_ = *msg;
+
+  Eigen::VectorXd x = Eigen::VectorXd::Zero(ekf_.getNumState());
+  x(STATE::X) = current_pose_.pose.position.x;
+  x(STATE::Y) = current_pose_.pose.position.y;
+  x(STATE::Z) = current_pose_.pose.position.z;
+  x(STATE::QX) = current_pose_.pose.orientation.x;
+  x(STATE::QY) = current_pose_.pose.orientation.y;
+  x(STATE::QZ) = current_pose_.pose.orientation.z;
+  x(STATE::QW) = current_pose_.pose.orientation.w;
+  ekf_.setInitialX(x);
 }
 
 void EkfLocalizationComponent::predictUpdate(const sensor_msgs::msg::Imu imu_msg)
@@ -250,6 +263,19 @@ void EkfLocalizationComponent::broadcastPose()
     current_pose_.pose.orientation.z = x(STATE::QZ);
     current_pose_.pose.orientation.w = x(STATE::QW);
     current_pose_pub_->publish(current_pose_);
+    if(broadcast_tf_topic_) {
+      geometry_msgs::msg::TransformStamped transform_stamped;
+      transform_stamped.header.stamp = current_stamp_;
+      transform_stamped.header.frame_id = reference_frame_id_;
+      transform_stamped.child_frame_id = robot_frame_id_;
+      transform_stamped.transform.translation.x = current_pose_.pose.position.x;
+      transform_stamped.transform.translation.y = current_pose_.pose.position.y;
+      transform_stamped.transform.translation.z = current_pose_.pose.position.z;
+      transform_stamped.transform.rotation = current_pose_.pose.orientation;
+    }
+  }
+  else {
+    RCLCPP_WARN_STREAM(get_logger(), "initial pose does not recieved.");
   }
 }
 }  // namespace kalman_filter_localization

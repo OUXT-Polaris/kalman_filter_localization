@@ -85,6 +85,7 @@ extern "C" {
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <tf2_ros/transform_broadcaster.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 // #include <tf2_sensor_msgs/tf2_sensor_msgs.h>
 
@@ -121,6 +122,7 @@ private:
   bool use_gnss_;
   bool use_odom_;
   bool use_gnss_as_initial_pose_;
+  bool broadcast_tf_topic_;
 
   bool initial_pose_recieved_{false};
 
@@ -138,11 +140,13 @@ private:
   rclcpp::Clock clock_;
   tf2_ros::Buffer tfbuffer_;
   tf2_ros::TransformListener listener_;
+  tf2_ros::TransformBroadcaster broadcaster_;
   void predictUpdate(const sensor_msgs::msg::Imu imu_msg);
   void measurementUpdate(
     const geometry_msgs::msg::PoseStamped pose_msg,
     const Eigen::Vector3d variance);
   void broadcastPose();
+  void initialPoseCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg);
 
   geometry_msgs::msg::PoseStamped current_pose_odom_;
   Eigen::Matrix4d previous_odom_mat_{Eigen::Matrix4d::Identity()};
