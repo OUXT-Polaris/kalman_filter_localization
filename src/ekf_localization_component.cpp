@@ -116,7 +116,8 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
             tfbuffer_.lookupTransform(
             robot_frame_id_,
             msg->header.frame_id,
-            time_point);
+            time_point,
+            tf2::durationFromSec(1.0));
           tf2::doTransform(acc_in, acc_out, transform);
           tf2::doTransform(w_in, w_out, transform);
           transformed_msg.header.stamp = msg->header.stamp;
