@@ -273,6 +273,7 @@ void EkfLocalizationComponent::broadcastPose()
       transform_stamped.transform.translation.y = current_pose_.pose.position.y;
       transform_stamped.transform.translation.z = current_pose_.pose.position.z;
       transform_stamped.transform.rotation = current_pose_.pose.orientation;
+      broadcaster_.sendTransform(transform_stamped);
     }
   }
   else {
