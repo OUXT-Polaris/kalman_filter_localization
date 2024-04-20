@@ -124,8 +124,6 @@ private:
   bool use_gnss_as_initial_pose_;
   bool broadcast_tf_topic_;
 
-  bool initial_pose_recieved_{false};
-
   geometry_msgs::msg::PoseStamped current_pose_;
   rclcpp::Time current_stamp_;
 
