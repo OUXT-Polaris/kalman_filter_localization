@@ -164,7 +164,7 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
       initialPoseCallback(msg);
     } else {
       if (initial_pose_ && use_gnss_) {
-        RCLCPP_INFO_STREAM(get_logger(), "update measurement");
+        // RCLCPP_INFO_STREAM(get_logger(), "update measurement");
         measurementUpdate(*msg, var_gnss_);
       }
     }
