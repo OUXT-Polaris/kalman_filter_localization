@@ -29,11 +29,11 @@
 // LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
 // ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
-#include <kalman_filter_localization/ekf_localization_component.hpp>
 #include <chrono>
-#include <vector>
+#include <kalman_filter_localization/ekf_localization_component.hpp>
 #include <memory>
 #include <string>
+#include <vector>
 using namespace std::chrono_literals;
 
 namespace kalman_filter_localization
@@ -43,7 +43,8 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
   clock_(RCL_ROS_TIME),
   tfbuffer_(std::make_shared<rclcpp::Clock>(clock_)),
   listener_(tfbuffer_),
-  broadcaster_(this)
+  broadcaster_(this),
+  initial_pose_(std::nullopt)
 {
   declare_parameter("reference_frame_id", "map");
   get_parameter("reference_frame_id", reference_frame_id_);
@@ -86,126 +87,109 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
 
   // Setup Publisher
   std::string output_pose_name = get_name() + std::string("/current_pose");
-  current_pose_pub_ =
-    create_publisher<geometry_msgs::msg::PoseStamped>(output_pose_name, 10);
+  current_pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(output_pose_name, 10);
 
   // Setup Subscriber
   auto initial_pose_callback =
-    [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
-    {
+    [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void {
 
-    };
+  };
 
-  auto imu_callback =
-    [this](const sensor_msgs::msg::Imu::SharedPtr msg) -> void
-    {
-      if (initial_pose_recieved_) {
-        sensor_msgs::msg::Imu transformed_msg;
-        try {
-          geometry_msgs::msg::Vector3Stamped acc_in, acc_out, w_in, w_out;
-          acc_in.vector.x = msg->linear_acceleration.x;
-          acc_in.vector.y = msg->linear_acceleration.y;
-          acc_in.vector.z = msg->linear_acceleration.z;
-          w_in.vector.x = msg->angular_velocity.x;
-          w_in.vector.y = msg->angular_velocity.y;
-          w_in.vector.z = msg->angular_velocity.z;
-          tf2::TimePoint time_point = tf2::TimePoint(
-            std::chrono::seconds(msg->header.stamp.sec) +
-            std::chrono::nanoseconds(msg->header.stamp.nanosec));
-          const geometry_msgs::msg::TransformStamped transform =
-            tfbuffer_.lookupTransform(
-            robot_frame_id_,
-            msg->header.frame_id,
-            time_point,
-            tf2::durationFromSec(1.0));
-          tf2::doTransform(acc_in, acc_out, transform);
-          tf2::doTransform(w_in, w_out, transform);
-          transformed_msg.header.stamp = msg->header.stamp;
-          transformed_msg.angular_velocity.x = w_out.vector.x;
-          transformed_msg.angular_velocity.y = w_out.vector.y;
-          transformed_msg.angular_velocity.z = w_out.vector.z;
-          transformed_msg.linear_acceleration.x = acc_out.vector.x;
-          transformed_msg.linear_acceleration.y = acc_out.vector.y;
-          transformed_msg.linear_acceleration.z = acc_out.vector.z;
-          predictUpdate(transformed_msg);
-        } catch (tf2::TransformException & e) {
-          RCLCPP_ERROR(this->get_logger(), "%s", e.what());
-          return;
-        } catch (std::runtime_error & e) {
-          RCLCPP_ERROR(this->get_logger(), "%s", e.what());
-          return;
-        }
+  auto imu_callback = [this](const sensor_msgs::msg::Imu::SharedPtr msg) -> void {
+    if (initial_pose_) {
+      sensor_msgs::msg::Imu transformed_msg;
+      try {
+        geometry_msgs::msg::Vector3Stamped acc_in, acc_out, w_in, w_out;
+        acc_in.vector.x = msg->linear_acceleration.x;
+        acc_in.vector.y = msg->linear_acceleration.y;
+        acc_in.vector.z = msg->linear_acceleration.z;
+        w_in.vector.x = msg->angular_velocity.x;
+        w_in.vector.y = msg->angular_velocity.y;
+        w_in.vector.z = msg->angular_velocity.z;
+        tf2::TimePoint time_point = tf2::TimePoint(
+          std::chrono::seconds(msg->header.stamp.sec) +
+          std::chrono::nanoseconds(msg->header.stamp.nanosec));
+        const geometry_msgs::msg::TransformStamped transform = tfbuffer_.lookupTransform(
+          robot_frame_id_, msg->header.frame_id, time_point, tf2::durationFromSec(1.0));
+        tf2::doTransform(acc_in, acc_out, transform);
+        tf2::doTransform(w_in, w_out, transform);
+        transformed_msg.header.stamp = msg->header.stamp;
+        transformed_msg.angular_velocity.x = w_out.vector.x;
+        transformed_msg.angular_velocity.y = w_out.vector.y;
+        transformed_msg.angular_velocity.z = w_out.vector.z;
+        transformed_msg.linear_acceleration.x = acc_out.vector.x;
+        transformed_msg.linear_acceleration.y = acc_out.vector.y;
+        transformed_msg.linear_acceleration.z = acc_out.vector.z;
+        predictUpdate(transformed_msg);
+      } catch (tf2::TransformException & e) {
+        RCLCPP_ERROR(this->get_logger(), "%s", e.what());
+        return;
+      } catch (std::runtime_error & e) {
+        RCLCPP_ERROR(this->get_logger(), "%s", e.what());
+        return;
       }
-    };
+    }
+  };
 
-  auto odom_callback =
-    [this](const nav_msgs::msg::Odometry::SharedPtr msg) -> void
-    {
-      if (initial_pose_recieved_ && use_odom_) {
-        Eigen::Affine3d affine;
-        tf2::fromMsg(msg->pose.pose, affine);
-        Eigen::Matrix4d odom_mat = affine.matrix();
-        if (previous_odom_mat_ == Eigen::Matrix4d::Identity()) {
-          current_pose_odom_ = current_pose_;
-          previous_odom_mat_ = odom_mat;
-          return;
-        }
-
-        Eigen::Affine3d current_affine;
-        tf2::fromMsg(current_pose_odom_.pose, current_affine);
-        Eigen::Matrix4d current_trans = current_affine.matrix();
-        current_trans = current_trans * previous_odom_mat_.inverse() * odom_mat;
-
-        geometry_msgs::msg::PoseStamped pose;
-        pose.header = msg->header;
-        pose.pose.position.x = current_trans(0, 3);
-        pose.pose.position.y = current_trans(1, 3);
-        pose.pose.position.z = current_trans(2, 3);
-        measurementUpdate(pose, var_odom_);
-
+  auto odom_callback = [this](const nav_msgs::msg::Odometry::SharedPtr msg) -> void {
+    if (initial_pose_ && use_odom_) {
+      Eigen::Affine3d affine;
+      tf2::fromMsg(msg->pose.pose, affine);
+      Eigen::Matrix4d odom_mat = affine.matrix();
+      if (previous_odom_mat_ == Eigen::Matrix4d::Identity()) {
         current_pose_odom_ = current_pose_;
         previous_odom_mat_ = odom_mat;
+        return;
       }
-    };
 
-  auto gnss_pose_callback =
-    [&](const geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void
-    {
-      if(use_gnss_as_initial_pose_ && !initial_pose_recieved_) {
-        initialPoseCallback(msg);
-      }
-      else {
-        if (initial_pose_recieved_ && use_gnss_) {
-          RCLCPP_INFO_STREAM(get_logger(), "update measurement");
-          measurementUpdate(*msg, var_gnss_);
-        }
-      }
-    };
+      Eigen::Affine3d current_affine;
+      tf2::fromMsg(current_pose_odom_.pose, current_affine);
+      Eigen::Matrix4d current_trans = current_affine.matrix();
+      current_trans = current_trans * previous_odom_mat_.inverse() * odom_mat;
 
-  if(!use_gnss_as_initial_pose_) {
-    sub_initial_pose_ =
-      create_subscription<geometry_msgs::msg::PoseStamped>(initial_pose_topic_, 1,
-        std::bind(&EkfLocalizationComponent::initialPoseCallback, this, std::placeholders::_1));
+      geometry_msgs::msg::PoseStamped pose;
+      pose.header = msg->header;
+      pose.pose.position.x = current_trans(0, 3);
+      pose.pose.position.y = current_trans(1, 3);
+      pose.pose.position.z = current_trans(2, 3);
+      measurementUpdate(pose, var_odom_);
+
+      current_pose_odom_ = current_pose_;
+      previous_odom_mat_ = odom_mat;
+    }
+  };
+
+  auto gnss_pose_callback = [&](const geometry_msgs::msg::PoseStamped::SharedPtr msg) -> void {
+    if (use_gnss_as_initial_pose_ && !initial_pose_) {
+      initialPoseCallback(msg);
+    } else {
+      if (initial_pose_ && use_gnss_) {
+        RCLCPP_INFO_STREAM(get_logger(), "update measurement");
+        measurementUpdate(*msg, var_gnss_);
+      }
+    }
+  };
+
+  if (!use_gnss_as_initial_pose_) {
+    sub_initial_pose_ = create_subscription<geometry_msgs::msg::PoseStamped>(
+      initial_pose_topic_, 1,
+      std::bind(&EkfLocalizationComponent::initialPoseCallback, this, std::placeholders::_1));
   }
-  sub_imu_ =
-    create_subscription<sensor_msgs::msg::Imu>(imu_topic_, 1,
-      imu_callback);
-  sub_odom_ =
-    create_subscription<nav_msgs::msg::Odometry>(odom_topic_, 1,
-      odom_callback);
+  sub_imu_ = create_subscription<sensor_msgs::msg::Imu>(imu_topic_, 1, imu_callback);
+  sub_odom_ = create_subscription<nav_msgs::msg::Odometry>(odom_topic_, 1, odom_callback);
   sub_gnss_pose_ =
-    create_subscription<geometry_msgs::msg::PoseStamped>(gnss_pose_topic_, 1,
-      gnss_pose_callback);
+    create_subscription<geometry_msgs::msg::PoseStamped>(gnss_pose_topic_, 1, gnss_pose_callback);
   std::chrono::milliseconds period(pub_period_);
   timer_ = create_wall_timer(
     std::chrono::duration_cast<std::chrono::nanoseconds>(period),
     std::bind(&EkfLocalizationComponent::broadcastPose, this));
 }
 
-void EkfLocalizationComponent::initialPoseCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
+void EkfLocalizationComponent::initialPoseCallback(
+  const geometry_msgs::msg::PoseStamped::SharedPtr msg)
 {
   RCLCPP_INFO_STREAM(get_logger(), "initial pose callback");
-  initial_pose_recieved_ = true;
+  initial_pose_ = *msg;
   current_pose_ = *msg;
 
   Eigen::VectorXd x = Eigen::VectorXd::Zero(ekf_.getNumState());
@@ -223,36 +207,28 @@ void EkfLocalizationComponent::predictUpdate(const sensor_msgs::msg::Imu imu_msg
 {
   current_stamp_ = imu_msg.header.stamp;
 
-  double current_time_imu = imu_msg.header.stamp.sec +
-    imu_msg.header.stamp.nanosec * 1e-9;
+  double current_time_imu = imu_msg.header.stamp.sec + imu_msg.header.stamp.nanosec * 1e-9;
   Eigen::Vector3d gyro = Eigen::Vector3d(
-    imu_msg.angular_velocity.x,
-    imu_msg.angular_velocity.y,
-    imu_msg.angular_velocity.z);
+    imu_msg.angular_velocity.x, imu_msg.angular_velocity.y, imu_msg.angular_velocity.z);
   Eigen::Vector3d linear_acceleration = Eigen::Vector3d(
-    imu_msg.linear_acceleration.x,
-    imu_msg.linear_acceleration.y,
-    imu_msg.linear_acceleration.z);
+    imu_msg.linear_acceleration.x, imu_msg.linear_acceleration.y, imu_msg.linear_acceleration.z);
 
   ekf_.predictionUpdate(current_time_imu, gyro, linear_acceleration);
 }
 
-
 void EkfLocalizationComponent::measurementUpdate(
-  const geometry_msgs::msg::PoseStamped pose_msg,
-  const Eigen::Vector3d variance)
+  const geometry_msgs::msg::PoseStamped pose_msg, const Eigen::Vector3d variance)
 {
   current_stamp_ = pose_msg.header.stamp;
-  Eigen::Vector3d y = Eigen::Vector3d(pose_msg.pose.position.x,
-      pose_msg.pose.position.y,
-      pose_msg.pose.position.z);
+  Eigen::Vector3d y =
+    Eigen::Vector3d(pose_msg.pose.position.x, pose_msg.pose.position.y, pose_msg.pose.position.z);
 
   ekf_.observationUpdate(y, variance);
 }
 
 void EkfLocalizationComponent::broadcastPose()
 {
-  if (initial_pose_recieved_) {
+  if (initial_pose_) {
     auto x = ekf_.getX();
     current_pose_.header.stamp = current_stamp_;
     current_pose_.header.frame_id = reference_frame_id_;
@@ -264,7 +240,7 @@ void EkfLocalizationComponent::broadcastPose()
     current_pose_.pose.orientation.z = x(STATE::QZ);
     current_pose_.pose.orientation.w = x(STATE::QW);
     current_pose_pub_->publish(current_pose_);
-    if(broadcast_tf_topic_) {
+    if (broadcast_tf_topic_) {
       geometry_msgs::msg::TransformStamped transform_stamped;
       transform_stamped.header.stamp = current_stamp_;
       transform_stamped.header.frame_id = reference_frame_id_;
@@ -275,8 +251,7 @@ void EkfLocalizationComponent::broadcastPose()
       transform_stamped.transform.rotation = current_pose_.pose.orientation;
       broadcaster_.sendTransform(transform_stamped);
     }
-  }
-  else {
+  } else {
     RCLCPP_WARN_STREAM(get_logger(), "initial pose does not recieved.");
   }
 }

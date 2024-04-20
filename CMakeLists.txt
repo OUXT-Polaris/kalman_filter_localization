@@ -21,22 +21,9 @@ install(
 )
 
 # find dependencies
-find_package(ament_cmake REQUIRED)
-find_package(rclcpp REQUIRED)
-find_package(rclcpp_components REQUIRED)
-find_package(tf2 REQUIRED)
-find_package(tf2_geometry_msgs REQUIRED)
-find_package(tf2_sensor_msgs REQUIRED)
-find_package(tf2_ros REQUIRED)
-find_package(tf2_eigen REQUIRED)
-find_package(sensor_msgs REQUIRED)
-find_package(nav_msgs REQUIRED)
-find_package(geometry_msgs REQUIRED)
-find_package(message_filters REQUIRED)
+find_package(ament_cmake_auto REQUIRED)
 find_package(Eigen3 REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
-# find_package(<dependency> REQUIRED)
+ament_auto_find_build_dependencies()
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -49,7 +36,7 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-add_library(ekf_localization_component SHARED
+ament_auto_add_library(ekf_localization_component SHARED
 src/ekf_localization_component.cpp
 )
 
@@ -75,38 +62,9 @@ include_directories(
 rclcpp_components_register_nodes(ekf_localization_component
   "kalman_filter_localization::EkfLocalizationComponent")
 
-# install executables/libs
-install(
-  DIRECTORY "include/"
-  DESTINATION include
-)
-
 install(
   DIRECTORY launch param
   DESTINATION share/${PROJECT_NAME}
 )
 
-install(TARGETS
-  ekf_localization_node
-  DESTINATION lib/kalman_filter_localization
-)
-
-install(TARGETS
-  ekf_localization_component
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION bin)
-
-
-# export
-ament_export_dependencies(ament_cmake)
-ament_export_dependencies(rclcpp)
-ament_export_dependencies(rclcpp_components)
-ament_export_dependencies(tf2_ros)
-ament_export_dependencies(nav_msgs)
-ament_export_dependencies(sensor_msgs)
-ament_export_dependencies(geometry_msgs)
-ament_export_dependencies(rosidl_default_runtime)
-ament_export_include_directories(include)
-
-ament_package()
+ament_auto_package()
