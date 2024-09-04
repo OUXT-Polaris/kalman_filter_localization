@@ -125,8 +125,8 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
         
         geometry_msgs::msg::TwistStamped send_data;
         send_data.twist.angular.x = w_out.vector.x;
-        send_data.twist.angular.y = w_out.vector.x;
-        send_data.twist.angular.z = w_out.vector.x;
+        send_data.twist.angular.y = w_out.vector.y;
+        send_data.twist.angular.z = w_out.vector.z;
         send_data.twist.linear.x = acc_out.vector.x;
         send_data.twist.linear.y = acc_out.vector.y;
         send_data.twist.linear.z = acc_out.vector.z;
