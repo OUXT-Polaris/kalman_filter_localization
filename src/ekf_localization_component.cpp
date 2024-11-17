@@ -88,6 +88,7 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
   // Setup Publisher
   std::string output_pose_name = get_name() + std::string("/current_pose");
   current_pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>(output_pose_name, 10);
+  current_twist_pub_ = create_publisher<geometry_msgs::msg::TwistStamped>("/current_twist", 10);
 
   // Setup Subscriber
   auto initial_pose_callback =
@@ -110,7 +111,7 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
           std::chrono::seconds(msg->header.stamp.sec) +
           std::chrono::nanoseconds(msg->header.stamp.nanosec));
         const geometry_msgs::msg::TransformStamped transform = tfbuffer_.lookupTransform(
-          robot_frame_id_, msg->header.frame_id, time_point, tf2::durationFromSec(1.0));
+          robot_frame_id_, msg->header.frame_id, time_point, tf2::durationFromSec(5.0));
         tf2::doTransform(acc_in, acc_out, transform);
         tf2::doTransform(w_in, w_out, transform);
         transformed_msg.header.stamp = msg->header.stamp;
@@ -121,6 +122,15 @@ EkfLocalizationComponent::EkfLocalizationComponent(const rclcpp::NodeOptions & o
         transformed_msg.linear_acceleration.y = acc_out.vector.y;
         transformed_msg.linear_acceleration.z = acc_out.vector.z;
         predictUpdate(transformed_msg);
+        
+        geometry_msgs::msg::TwistStamped send_data;
+        send_data.twist.angular.x = w_out.vector.x;
+        send_data.twist.angular.y = w_out.vector.y;
+        send_data.twist.angular.z = w_out.vector.z;
+        send_data.twist.linear.x = acc_out.vector.x;
+        send_data.twist.linear.y = acc_out.vector.y;
+        send_data.twist.linear.z = acc_out.vector.z;
+        current_twist_pub_->publish(send_data);      
       } catch (tf2::TransformException & e) {
         RCLCPP_ERROR(this->get_logger(), "%s", e.what());
         return;
@@ -240,6 +250,7 @@ void EkfLocalizationComponent::broadcastPose()
     current_pose_.pose.orientation.z = x(STATE::QZ);
     current_pose_.pose.orientation.w = x(STATE::QW);
     current_pose_pub_->publish(current_pose_);
+    
     if (broadcast_tf_topic_) {
       geometry_msgs::msg::TransformStamped transform_stamped;
       transform_stamped.header.stamp = current_stamp_;
